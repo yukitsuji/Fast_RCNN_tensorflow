@@ -92,6 +92,13 @@ def nms():
 def loss():
     pass
 
+def data_augmentator(images, labels):
+    """Data Augmentation *Not Resize transform
+    1. Flip or Not
+    2. vgg rescale
+    """
+    return images, labels
+
 def im_list_to_blob(ims):
     """Convert a list of images into a network input.
     Assumes images are already prepared (means subtracted, BGR order, ...).
@@ -105,7 +112,7 @@ def im_list_to_blob(ims):
         blob[i, 0:im.shape[0], 0:im.shape[1], :] = im
     return blob
 
-def prep_im_for_blob(im, pixel_means, target_size, max_size):
+def prep_im_for_blob(im, pixel_means, target_size=600, max_size=1000):
     """Mean subtract and scale an image for use in a blob."""
     im = im.astype(np.float32, copy=False)
     im -= pixel_means
