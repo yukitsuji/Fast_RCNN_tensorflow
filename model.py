@@ -3,6 +3,7 @@ import numpy as np
 # from vgg16 import vgg16
 from base_bgg16 import Vgg
 import tensorflow as tf
+# from utility.image.data_augmentation.flip import Flip
 sys.path.append("/Users/tsujiyuuki/env_python/code/my_code/Data_Augmentation")
 
 """
@@ -92,29 +93,52 @@ def nms():
 def loss():
     pass
 
-def data_augmentator(images, labels):
+def data_augmentator(images, labels, mean=np.array([103.939, 116.779, 123.68])):
     """Data Augmentation *Not Resize transform
+
+    #Args:
+        images (list): list of 3-dimensional ndarray. dtype is float32, max is 255, BGR
     1. Flip or Not
     2. vgg rescale
     """
+    for index, img in enumerate(images):
+        if np.random.randint(2):
+            img = img[:, ::-1] # flip
+
+        images[index] = img - mean            # vgg rescale
     return images, labels
 
-def im_list_to_blob(ims):
+def process():
+    """#TODO: You should optimize for performance"""
+    for img in images:
+        img = preprocess_imgs(img)
+    convert_imgslist_to_ndarray(images)
+
+    # Then, 
+    pass
+
+def convert_imgslist_to_ndarray(images):
     """Convert a list of images into a network input.
     Assumes images are already prepared (means subtracted, BGR order, ...).
+
+    In this stage, the shape of images are different
     """
-    max_shape = np.array([im.shape for im in ims]).max(axis=0)
-    num_images = len(ims)
+    max_shape = np.array([im.shape for im in images]).max(axis=0)
+    num_images = len(images)
     blob = np.zeros((num_images, max_shape[0], max_shape[1], 3),
                     dtype=np.float32)
     for i in xrange(num_images):
-        im = ims[i]
+        im = images[i]
         blob[i, 0:im.shape[0], 0:im.shape[1], :] = im
     return blob
 
-def prep_im_for_blob(im, pixel_means, target_size=600, max_size=1000):
-    """Mean subtract and scale an image for use in a blob."""
+def preprocess_imgs(im, pixel_means=np.array([103.939, 116.779, 123.68]), target_size=600, max_size=1000):
+    """Mean subtract and scale an image for use in a blob.
+    If you want to Data Augmentation, please edit this function
+    """
     im = im.astype(np.float32, copy=False)
+    if np.random.randint(2):
+        im = im[:, ::-1]
     im -= pixel_means
     im_shape = im.shape
     im_size_min = np.min(im_shape[0:2])
