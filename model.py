@@ -68,9 +68,7 @@ In this stage, Describe Datasets.
 3. Udacity Datasets
 """
 
-def create_input_imgs(orig_img, shape=(500, 500)):
-    """create input images for network from original images"""
-    return resize_imgs, scales
+# TODO: datasetsを丸ごとメモリに展開できるか。Generatorを用いるか。
 
 def create_labels(resized_images, resize_scales, feature_scale=1./16):
     """create labels for classification and regression
@@ -93,29 +91,81 @@ def nms():
 def loss():
     pass
 
-def data_augmentator(images, labels, mean=np.array([103.939, 116.779, 123.68])):
-    """Data Augmentation *Not Resize transform
 
-    #Args:
-        images (list): list of 3-dimensional ndarray. dtype is float32, max is 255, BGR
-    1. Flip or Not
-    2. vgg rescale
+def process(image_dir, xml_dir, num_of_rois, batch_size, min_size):
+    dataset_img_list, dataset_pred_roi_list, g_bboxes, get_Image_Roi_All(image_dir, xml_dir, min_size)
+    batch_imgs, batch_rois, batch_g_bboxes = elect_inputs_from_datasets(dataset_img_list, dataset_pred_roi_list, g_bboxes, batch_size)
+
+def get_Image_Roi_All(image_dir, xml_dir, min_size):
+    """Get Images and ROIs of All Datasets.
+    # Args:
+        image_dir  (str): path of image directory.
+        xml_dir    (str): path of label's xml directory.
+        num_of_rois(int): Number of ROIs in a image.
+    # Returns:
+        images     (list): List of ndarray Images.
+        rois       (list or ndarray): List of ROIs Label [x, y, w, h, 0, 1]
     """
-    for index, img in enumerate(images):
-        if np.random.randint(2):
-            img = img[:, ::-1] # flip
+    # 車が含まれている画像のみラベルと一緒に読み込む
+    image_pathlist = 0 #load_for_detection(xml_dir)
+    g_bboxes = 0 #load_for_detection(xml_dir) #TODO: [Datasets, x, y, w, h]
+    dataset_img_list = [] # len(dataset_img_list) == Number of Datasets Images
+    dataset_pred_roi_list = [] # len(dataset_pred_roi_list) == Number of (num_of_rois * num of images)
+    # shape is [batch_channel, x, y, w, h]
 
-        images[index] = img - mean            # vgg rescale
-    return images, labels
+    # Preprocess Ground Truth ROIs. shape is [Num of ROIs * batch_size, x, y, w, h, 0, 1]
+    g_bboxes = 0
 
-def process():
-    """#TODO: You should optimize for performance"""
-    for img in images:
-        img = preprocess_imgs(img)
-    convert_imgslist_to_ndarray(images)
+    for image_path in image_pathlist:
+        img = cv2.imread(image_path)
+        # ここでは、IOUを計算していないので、予測のbounding boxは絞らない
+        # なので、数多くのbounding boxが存在していることになるが、メモリが許す限り確保する
+        p_rois_candicate = pred_bboxes(img, min_size, index)
+        img, im_scale = preprocess_imgs(img)
+        p_rois_candicate = unique_bboxes(p_rois_candicate, im_scale, feature_scale=1./16)
+        dataset_img_list.append(img)
+        dataset_pred_roi_list.append(p_rois_candicate)
+    return dataset_img_list, dataset_pred_roi_list, g_bboxes
 
-    # Then, 
+def select_inputs_from_datasets(dataset_img_list, dataset_pred_roi_list, g_bboxes, batch_size):
+    perm = np.random.permutation(len(dataset_img_list))
+    batches = [perm[i * batch_size:(i + 1) * batch_size] \
+                   for i in range(len(dataset_img_list) // batch_size)]
+    for batch in batches:
+        batch_imgs = dataset_img_list[batch]
+        batch_rois = dataset_pred_roi_list[batch]
+        batch_g_bboxes = g_bboxes[batch]
+        # この時点でbatch_rois, g_bboxesは、batch毎にListでまとめられていそう？　#TODO
+        # TODO: Batch毎にLabelの形にする。それをcalculate IOUに入れて、最終的な形をvstackすれば全体のLabelが得られる
+
+        # Flip Conversion
+        # batch_imgs, batch_rois, batch_g_bboxes = flip_conversion(batch_imgs, batch_rois, batch_g_bboxes)
+        batch_imgs = convert_imgslist_to_ndarray(batch_imgs)
+        # calculate IOU between pred_roi_candicate, ground truth bounding box
+        # この時点でbatch_g_bboxesはLabelの形になっていると想定
+        batch_rois, batch_g_bboxes = calculate_IOU(batch_rois, batch_g_bboxes)
+        yield batch_imgs, batch_rois, batch_g_bboxes
+
+def convert_pred_bbox_to_roi(batch_bbox, feature_scale=1./16):
     pass
+
+def calculate_IOU(batch_roi, batch_g_bboxes, fg_thres=0.5, bg_thres_max=0.5, bg_thres_min=0.1):
+    """各画像の全ての車のラベルに対して、IOUを計算する
+    そのために、batch_roi, batch_g_bboxesをforループで回し、
+    """
+    area = batch_g_bboxes[:, 3] * batch_g_bboxes[: 4]
+    w = np.maximum(batch_roi[:, 0], batch_g_bboxes[:, 0]) - np.minimum(batch_roi[:, 1], batch_g_bboxes[:, 1])
+    w_id = np.where(w > 0)[0]
+    h = np.minimum(batch_roi[w_id][:, 0], batch_g_bboxes[w_id][:, 0]) - np.minimum(batch_roi[w_id][:, 1], batch_g_bboxes[w_id][:, 1])
+    h_id = np.where(h > 0)[0]
+    IOU = float(w[w_id][h_id] * h[w_id][h_id]) / area[w_id][h_id]
+    fg_rois = np.where(IOU >= fg_thres)[0]
+    bg_rois1 = np.where(IOU < bg_thres_max)[0]
+    bg_rois2 = np.where(IOU[bg_rois] >= bg_thres_min)[0]
+    fg_index = w_id[h_id][fg_rois]
+    bg_index = w_id[h_id][bg_rois1][bg_rois2]
+    index = np.hstack((fg_index, bg_index))
+    return batch_rois[index], batch_g_bboxes[index]
 
 def convert_imgslist_to_ndarray(images):
     """Convert a list of images into a network input.
@@ -132,13 +182,16 @@ def convert_imgslist_to_ndarray(images):
         blob[i, 0:im.shape[0], 0:im.shape[1], :] = im
     return blob
 
+def flip_conversion(batch_imgs, batch_rois, batch_g_bboxes, batch_size):
+    return batch_imgs, batch_rois, batch_g_bboxes
+
 def preprocess_imgs(im, pixel_means=np.array([103.939, 116.779, 123.68]), target_size=600, max_size=1000):
     """Mean subtract and scale an image for use in a blob.
     If you want to Data Augmentation, please edit this function
     """
     im = im.astype(np.float32, copy=False)
-    if np.random.randint(2):
-        im = im[:, ::-1]
+    # if np.random.randint(2):
+    #     im = im[:, ::-1]
     im -= pixel_means
     im_shape = im.shape
     im_size_min = np.min(im_shape[0:2])
@@ -155,7 +208,7 @@ def data_generator(imgs, rois, labels):
     """data generator for network inputs"""
     yield batch_x, batch_rois, batch_labels
 
-def get_bboxes(orig_img, im_scale, min_size, feature_scale=1. / 16):
+def unique_bboxes(rects, im_scale, feature_scale=1./16):
     """Get Bounding Box from Original Image.
 
     # Args:
@@ -164,19 +217,20 @@ def get_bboxes(orig_img, im_scale, min_size, feature_scale=1. / 16):
         feature_scale(float): scale of feature map. 2 ** (num of pooling layer)
 
     """
-    rects = []
-    dlib.find_candidate_object_locations(orig_img, rects, min_size=min_size)
-    rects = [[0, d.left(), d.top(), d.right(), d.bottom()] for d in rects]
-    rects = np.asarray(rects, dtype=np.float32)
-
-    # bbox pre-processing
     rects *= im_scale
     v = np.array([1, 1e3, 1e6, 1e9, 1e12])
-    hashes = np.round(rects * dedup_boxes).dot(v)
+    hashes = np.round(rects * feature_scale).dot(v)
     _, index, inv_index = np.unique(hashes, return_index=True,
                                     return_inverse=True)
     rects = rects[index, :]
 
+    return rects
+
+def pred_bboxes(orig_img, min_size, index):
+    rects = []
+    dlib.find_candidate_object_locations(orig_img, rects, min_size=min_size)
+    rects = [[0, d.left(), d.top(), d.right(), d.bottom()] for d in rects]
+    rects = np.asarray(rects, dtype=np.float32)
     return rects
 
 def fast_rcnn(sess, rois, roi_size=(7, 7), vggpath=None, image_shape=(300, 300), \
@@ -214,22 +268,23 @@ def fully_connected(input_layer, shape, name="", is_training=True, use_batchnorm
             fully = batch_norm(fully, is_training)
         return fully
 
-def batch_norm(inputs, is_training, decay=0.9, eps=1e-5):
+def batch_norm(inputs, phase_train, decay=0.9, eps=1e-5):
     """Batch Normalization
 
        Args:
            inputs: input data(Batch size) from last layer
-           is_training: when you test, please set is_training "None"
+           phase_train: when you test, please set phase_train "None"
        Returns:
            output for next layer
     """
-    gamma = tf.Variable(tf.ones(inputs.get_shape()[1:]), name="gamma")
-    beta = tf.Variable(tf.zeros(inputs.get_shape()[1:]), name="beta")
-    pop_mean = tf.Variable(tf.zeros(inputs.get_shape()[1:]), trainable=False, name="pop_mean")
-    pop_var = tf.Variable(tf.ones(inputs.get_shape()[1:]), trainable=False, name="pop_var")
+    gamma = tf.get_variable("gamma", shape=inputs.get_shape()[-1], dtype=tf.float32, initializer=tf.constant_initializer(1.0))
+    beta = tf.get_variable("beta", shape=inputs.get_shape()[-1], dtype=tf.float32, initializer=tf.constant_initializer(0.0))
+    pop_mean = tf.get_variable("pop_mean", trainable=False, shape=inputs.get_shape()[-1], dtype=tf.float32, initializer=tf.constant_initializer(0.0))
+    pop_var = tf.get_variable("pop_var", trainable=False, shape=inputs.get_shape()[-1], dtype=tf.float32, initializer=tf.constant_initializer(1.0))
+    axes = range(len(inputs.get_shape()) - 1)
 
-    if is_training != None:
-        batch_mean, batch_var = tf.nn.moments(inputs, [0])
+    if phase_train != None:
+        batch_mean, batch_var = tf.nn.moments(inputs, axes)
         train_mean = tf.assign(pop_mean, pop_mean * decay + batch_mean*(1 - decay))
         train_var = tf.assign(pop_var, pop_var * decay + batch_var * (1 - decay))
         with tf.control_dependencies([train_mean, train_var]):
