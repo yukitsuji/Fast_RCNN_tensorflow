@@ -93,8 +93,15 @@ def loss():
 
 
 def process(image_dir, xml_dir, num_of_rois, batch_size, min_size):
-    dataset_img_list, dataset_pred_roi_list, g_bboxes, get_Image_Roi_All(image_dir, xml_dir, min_size)
-    batch_imgs, batch_rois, batch_g_bboxes = elect_inputs_from_datasets(dataset_img_list, dataset_pred_roi_list, g_bboxes, batch_size)
+    # model Definition
+    # loss function
+    dataset_img_list, dataset_pred_bbox_list, g_bboxes, get_Image_Roi_All(image_dir, xml_dir, min_size)
+    # batch_imgs, batch_rois, batch_g_bboxes = select_inputs_from_datasets(dataset_img_list, dataset_pred_bbox_list, g_bboxes, batch_size)
+    for batch_imgs, batch_rois, batch_g_bboxes in select_inputs_from_datasets(dataset_img_list, dataset_pred_bbox_list, g_bboxes, batch_size):
+        pass
+        # training
+        # test
+        # validation
 
 def get_Image_Roi_All(image_dir, xml_dir, min_size):
     """Get Images and ROIs of All Datasets.
@@ -103,14 +110,14 @@ def get_Image_Roi_All(image_dir, xml_dir, min_size):
         xml_dir    (str): path of label's xml directory.
         num_of_rois(int): Number of ROIs in a image.
     # Returns:
-        images     (list): List of ndarray Images.
-        rois       (list or ndarray): List of ROIs Label [x, y, w, h, 0, 1]
+        images     (list): ndarray Images of datasets.
+        pred_bboxes(ndarray): rescaled bbox Label [0, x, y, w, h]
     """
     # 車が含まれている画像のみラベルと一緒に読み込む
     image_pathlist = 0 #load_for_detection(xml_dir)
     g_bboxes = 0 #load_for_detection(xml_dir) #TODO: [Datasets, x, y, w, h]
     dataset_img_list = [] # len(dataset_img_list) == Number of Datasets Images
-    dataset_pred_roi_list = [] # len(dataset_pred_roi_list) == Number of (num_of_rois * num of images)
+    dataset_pred_bbox_list = [] # len(dataset_pred_bbox_list) == Number of (num_of_rois * num of images)
     # shape is [batch_channel, x, y, w, h]
 
     # Preprocess Ground Truth ROIs. shape is [Num of ROIs * batch_size, x, y, w, h, 0, 1]
@@ -124,26 +131,41 @@ def get_Image_Roi_All(image_dir, xml_dir, min_size):
         img, im_scale = preprocess_imgs(img)
         p_rois_candicate = unique_bboxes(p_rois_candicate, im_scale, feature_scale=1./16)
         dataset_img_list.append(img)
-        dataset_pred_roi_list.append(p_rois_candicate)
-    return dataset_img_list, dataset_pred_roi_list, g_bboxes
+        dataset_pred_bbox_list.append(p_rois_candicate)
+    return np.array(dataset_img_list), np.array(dataset_pred_bbox_list), g_bboxes
 
-def select_inputs_from_datasets(dataset_img_list, dataset_pred_roi_list, g_bboxes, batch_size):
+def select_inputs_from_datasets(dataset_img_list, dataset_pred_bbox_list, g_bboxes, batch_size):
+    """
+    # Args:
+        dataset_img_list      (ndarray): ndarray Images in datasets.
+        dataset_pred_bbox_list(ndarray): rescaled bbox Label [0, x, y, w, h]
+                                         shape is [batch, num_of_rois, 5]
+        g_bboxes              (ndarray): GroundTruth Bounding Box with Class Label
+                                         shape is [batch, 6*max_label_num]
+                                         label is [x, y, w, h, car, background]
+        batch_size                (int): batch size for training
+    # Returns:
+        batch_imgs    (ndarray): input batch images for Network. Shape is [Batch Size, shape]
+        batch_p_bboxes(ndarray): input ROIs for Network. Shape is [Num of ROIs*Batch size]
+        batch_g_bboxes(ndarray): input GroundTruth Bounding Box for Network.
+                                 Shape is [Num of ROIs*Batch Size]
+    """
     perm = np.random.permutation(len(dataset_img_list))
     batches = [perm[i * batch_size:(i + 1) * batch_size] \
                    for i in range(len(dataset_img_list) // batch_size)]
     for batch in batches:
         batch_imgs = dataset_img_list[batch]
-        batch_rois = dataset_pred_roi_list[batch]
+        batch_p_bboxes = dataset_pred_bbox_list[batch]
         batch_g_bboxes = g_bboxes[batch]
-        # この時点でbatch_rois, g_bboxesは、batch毎にListでまとめられていそう？　#TODO
+        # この時点でbatch_p_bboxes, g_bboxesは、batch毎にListでまとめられていそう？　#TODO
         # TODO: Batch毎にLabelの形にする。それをcalculate IOUに入れて、最終的な形をvstackすれば全体のLabelが得られる
 
         # Flip Conversion
-        # batch_imgs, batch_rois, batch_g_bboxes = flip_conversion(batch_imgs, batch_rois, batch_g_bboxes)
+        # batch_imgs, batch_p_bboxes, batch_g_bboxes = flip_conversion(batch_imgs, batch_p_bboxes, batch_g_bboxes)
         batch_imgs = convert_imgslist_to_ndarray(batch_imgs)
         # calculate IOU between pred_roi_candicate, ground truth bounding box
         # この時点でbatch_g_bboxesはLabelの形になっていると想定
-        batch_rois, batch_g_bboxes = calculate_IOU(batch_rois, batch_g_bboxes)
+        batch_p_bboxes, batch_g_bboxes = calculate_IOU(batch_p_bboxes, batch_g_bboxes)
         yield batch_imgs, batch_rois, batch_g_bboxes
 
 def convert_pred_bbox_to_roi(batch_bbox, feature_scale=1./16):
@@ -223,7 +245,6 @@ def unique_bboxes(rects, im_scale, feature_scale=1./16):
     _, index, inv_index = np.unique(hashes, return_index=True,
                                     return_inverse=True)
     rects = rects[index, :]
-
     return rects
 
 def pred_bboxes(orig_img, min_size, index):
