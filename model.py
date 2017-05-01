@@ -58,7 +58,7 @@ In this stage, Calculate Loss
 
 11.Loss Function
    Regularize bounding box value [center_x, center_y, w, h] into
-   [(GroundTruth x / pred_x) / pred_w, (GroundTruth y / pred_y) / pred_h, GroundTruth w / pred_w, GroundTruth h / pred_h]
+   [(GroundTruth x - pred_x) / pred_w, (GroundTruth y - pred_y) / pred_h, log(GroundTruth w / pred_w), log(GroundTruth h / pred_h)]
    Class prediction is by softmax with loss.
    Bounding Box prediction is by smooth_L1 loss
 ###############################################################################
@@ -88,14 +88,10 @@ def create_rois(labels, feature_scale=1./16):
 def nms():
     return bboxes
 
-def loss():
-    pass
-
-
-def process(image_dir, xml_dir, num_of_rois, batch_size, min_size):
+def process(image_dir, label_dir, num_of_rois, batch_size, min_size):
     # model Definition
     # loss function
-    dataset_img_list, dataset_pred_bbox_list, g_bboxes, get_Image_Roi_All(image_dir, xml_dir, min_size)
+    dataset_img_list, dataset_pred_bbox_list, g_bboxes, get_Image_Roi_All(image_dir, label_dir, min_size)
     # batch_imgs, batch_rois, batch_g_bboxes = select_inputs_from_datasets(dataset_img_list, dataset_pred_bbox_list, g_bboxes, batch_size)
     for batch_imgs, batch_rois, batch_g_bboxes in select_inputs_from_datasets(dataset_img_list, dataset_pred_bbox_list, g_bboxes, batch_size):
         pass
@@ -103,35 +99,46 @@ def process(image_dir, xml_dir, num_of_rois, batch_size, min_size):
         # test
         # validation
 
-def get_Image_Roi_All(image_dir, xml_dir, min_size):
+def get_Image_Roi_All(image_dir, label_dir, min_size):
     """Get Images and ROIs of All Datasets.
     # Args:
         image_dir  (str): path of image directory.
-        xml_dir    (str): path of label's xml directory.
+        label_dir    (str): path of label's xml directory.
         num_of_rois(int): Number of ROIs in a image.
     # Returns:
         images     (list): ndarray Images of datasets.
         pred_bboxes(ndarray): rescaled bbox Label [0, x, y, w, h]
     """
     # 車が含まれている画像のみラベルと一緒に読み込む
-    image_pathlist = 0 #load_for_detection(xml_dir)
-    g_bboxes = 0 #load_for_detection(xml_dir) #TODO: [Datasets, x, y, w, h]
+    image_pathlist = 0 #load_for_detection(label_dir)
+    g_bboxes = 0 #load_for_detection(label_dir) #TODO: [Datasets, x, y, w, h]
     dataset_img_list = [] # len(dataset_img_list) == Number of Datasets Images
     dataset_pred_bbox_list = [] # len(dataset_pred_bbox_list) == Number of (num_of_rois * num of images)
-    # shape is [batch_channel, x, y, w, h]
-
     # Preprocess Ground Truth ROIs. shape is [Num of ROIs * batch_size, x, y, w, h, 0, 1]
-    g_bboxes = 0
+    g_bboxes = []
+    # shape is [batch_channel, x, y, w, h]
+    image_pathlist = glob.glob(image_dir)
+    label_pathlist = glob.glob(label_dir)
+    image_pathlist.sort()
+    label_pathlist.sort()
 
-    for image_path in image_pathlist:
+    for image_path, label_path in enumerate(image_pathlist, label_pathlist):
         img = cv2.imread(image_path)
+        label = read_label_from_txt(label_path)
+        if not label:
+            continue
         # ここでは、IOUを計算していないので、予測のbounding boxは絞らない
         # なので、数多くのbounding boxが存在していることになるが、メモリが許す限り確保する
-        p_rois_candicate = pred_bboxes(img, min_size, index)
+        p_bbox_candicate = pred_bboxes(img, min_size, index)
         img, im_scale = preprocess_imgs(img)
-        p_rois_candicate = unique_bboxes(p_rois_candicate, im_scale, feature_scale=1./16)
+        p_bbox_candicate = unique_bboxes(p_bbox_candicate, im_scale, feature_scale=1./16)
         dataset_img_list.append(img)
-        dataset_pred_bbox_list.append(p_rois_candicate)
+        dataset_pred_bbox_list.append(p_bbox_candicate)
+        g_bboxes.append(label)
+
+    dataset_pred_bbox_list = np.array(dataset_pred_bbox_list)
+    g_bboxes = np.array(g_bboxes)
+    g_bboxes = create_bbox_regression_label(dataset_pred_bbox_list, g_bboxes)
     return np.array(dataset_img_list), np.array(dataset_pred_bbox_list), g_bboxes
 
 def select_inputs_from_datasets(dataset_img_list, dataset_pred_bbox_list, g_bboxes, batch_size):
@@ -253,6 +260,15 @@ def pred_bboxes(orig_img, min_size, index):
     rects = [[0, d.left(), d.top(), d.right(), d.bottom()] for d in rects]
     rects = np.asarray(rects, dtype=np.float32)
     return rects
+
+def loss(obj_class, bbox_regression, g_obj_class, g_bbox_regression):
+    """Calculate Class Loss and Bounding Regression Loss.
+
+    # Args:
+        obj_class: Prediction of object class. Shape is [ROIs*Batch_Size, 2]
+        bbox_regression: Prediction of bounding box. Shape is [ROIs*Batch_Size, 4]
+    """
+    pass
 
 def fast_rcnn(sess, rois, roi_size=(7, 7), vggpath=None, image_shape=(300, 300), \
               is_training=None, use_batchnorm=False, activation=tf.nn.relu, num_of_rois=128):

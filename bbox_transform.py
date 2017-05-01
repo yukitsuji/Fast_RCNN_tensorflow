@@ -7,9 +7,21 @@
 
 import numpy as np
 
-def bbox_transform(ex_rois, gt_rois):
-    ex_widths = ex_rois[:, 2] - ex_rois[:, 0] + 1.0
-    ex_heights = ex_rois[:, 3] - ex_rois[:, 1] + 1.0
+def create_bbox_regression_label(p_bboxes, g_bboxes):
+    """Create Label for Bounding Box Regression Label
+    # Args:
+        p_bboxes: Predicted Bounging Box. Shape is [ROIs, 5].
+                  [0, left, top, right, bottom]
+        g_bboxes: GroundTruth Bounding Box. Shape is [ROIs, 5].
+                  [0, left, top, right, bottom]
+    # Returns:
+        regression_label: Regression Label of Bounding Boxes.
+                          Shape is [ROIs, 4]
+    """
+    p_width = p_bboxes[:, 2] - p_bboxes[:, 0] + 1
+    p_height = p_bboxes[:, 3] - p_bboxes[:, 1] + 1
+
+
     ex_ctr_x = ex_rois[:, 0] + 0.5 * ex_widths
     ex_ctr_y = ex_rois[:, 1] + 0.5 * ex_heights
 
@@ -28,6 +40,8 @@ def bbox_transform(ex_rois, gt_rois):
     return targets
 
 def bbox_transform_inv(boxes, deltas):
+    """Convert network output to Bounding Boxes
+    """
     if boxes.shape[0] == 0:
         return np.zeros((0, deltas.shape[1]), dtype=deltas.dtype)
 
