@@ -26,6 +26,6 @@ def read_label_from_txt(label_path):
                 bounding_box.append(label[4:8])
 
     if bounding_box:
-        return bounding_box
+        return np.array(bounding_box, dtype=np.float64)
     else:
-        return False
+        return None
